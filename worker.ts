@@ -42,6 +42,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
     switch (event.event.type) {
       case 'INITIAL_PURCHASE':
       case 'RENEWAL':
+      case 'PRODUCT_CHANGE':
       case 'NON_RENEWING_PURCHASE':
         console.log(`[handleWebhook] Processing purchase event: ${event.event.type}`);
         await handlePurchaseEvent(event, env);
@@ -49,6 +50,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
       case 'CANCELLATION':
       case 'EXPIRATION':
         console.log(`[handleWebhook] Received cancellation or expiration: ${event.event.type}`);
+        // Aquí puedes agregar lógica adicional para manejar cancelaciones o expiraciones si es necesario
         break;
       default:
         console.log(`[handleWebhook] Unhandled event type: ${event.event.type}`);
@@ -66,7 +68,7 @@ function getProductDetails(productId: string): { coinAmount: number, numberOfMod
   console.log(`[getProductDetails] Obteniendo detalles para el producto: ${productId}`);
   const productDetails: { [key: string]: { coinAmount: number, numberOfModels: number } } = {
     'subscribe.photos_ai_studio.1week_starter': { coinAmount: 50, numberOfModels: 1 },
-    'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 1 },
+    'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 2 },
     'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 2 }
   };
   return productDetails[productId] || { coinAmount: 0, numberOfModels: 0 };
@@ -77,27 +79,31 @@ async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
   const userId = event.event.app_user_id;
   const productId = event.event.product_id;
   const transactionId = event.event.id;
+  const expirationDate = new Date(event.event.expiration_at_ms).toISOString().split('T')[0]; // Convertir a YYYY-MM-DD
 
   if (!transactionId) {
     console.error('[handlePurchaseEvent] ID de transacción no válido');
     throw new Error('ID de transacción no válido');
   }
 
-  console.log(`[handlePurchaseEvent] ID de usuario: ${userId}, ID de producto: ${productId}, ID de transacción: ${transactionId}`);
+  console.log(`[handlePurchaseEvent] ID de usuario: ${userId}, ID de producto: ${productId}, ID de transacción: ${transactionId}, Fecha de expiración: ${expirationDate}`);
 
   const { coinAmount, numberOfModels } = getProductDetails(productId);
   console.log(`[handlePurchaseEvent] Cantidad de monedas: ${coinAmount}, Número de modelos: ${numberOfModels}`);
 
-  if (coinAmount > 0) {
-    console.log('[handlePurchaseEvent] Actualizando monedas y modelos del usuario');
-    await updateUserCoins(userId, transactionId, coinAmount, numberOfModels, env);
-  } else {
-    console.log('[handlePurchaseEvent] Producto no reconocido o sin monedas asociadas');
-  }
+  await updateUserCredits(userId, transactionId, coinAmount, numberOfModels, productId, expirationDate, env);
 }
 
-async function updateUserCoins(userId: string, transactionId: string, coinAmount: number, numberOfModels: number, env: Env): Promise<void> {
-  console.log(`[updateUserCoins] Actualizando monedas para User ID: ${userId}, Transaction ID: ${transactionId}, Cantidad de monedas: ${coinAmount}, Número de modelos: ${numberOfModels}`);
+async function updateUserCredits(
+  userId: string, 
+  transactionId: string, 
+  coinAmount: number, 
+  numberOfModels: number, 
+  productId: string,
+  expirationDate: string,
+  env: Env
+): Promise<void> {
+  console.log(`[updateUserCredits] Actualizando créditos para User ID: ${userId}, Transaction ID: ${transactionId}, Monedas: ${coinAmount}, Modelos: ${numberOfModels}, Producto: ${productId}, Expiración: ${expirationDate}`);
 
   try {
     const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/process_transaction`, {
@@ -111,20 +117,22 @@ async function updateUserCoins(userId: string, transactionId: string, coinAmount
         p_user_id: userId,
         p_transaction_id: transactionId,
         p_coin_amount: coinAmount,
-        p_models: numberOfModels
+        p_models: numberOfModels,
+        p_product_id: productId,
+        p_expiration_date: expirationDate
       })
     });
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`[updateUserCoins] Error en la respuesta de Supabase: ${errorText}`);
-      throw new Error(`Error al actualizar las monedas del usuario: ${errorText}`);
+      console.error(`[updateUserCredits] Error en la respuesta de Supabase: ${errorText}`);
+      throw new Error(`Error al actualizar los créditos del usuario: ${errorText}`);
     }
 
     const result = await response.json();
-    console.log('[updateUserCoins] Monedas y modelos actualizados con éxito:', result);
+    console.log('[updateUserCredits] Créditos actualizados con éxito:', result);
   } catch (error) {
-    console.error('[updateUserCoins] Error al actualizar las monedas y modelos del usuario:', error);
+    console.error('[updateUserCredits] Error al actualizar los créditos del usuario:', error);
     throw error;
   }
 }
