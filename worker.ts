@@ -69,7 +69,7 @@ function getProductDetails(productId: string): { coinAmount: number, numberOfMod
   const productDetails: { [key: string]: { coinAmount: number, numberOfModels: number } } = {
     'subscribe.photos_ai_studio.1week_starter': { coinAmount: 50, numberOfModels: 1 },
     'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 2 },
-    'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 2 }
+    'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 3 }
   };
   return productDetails[productId] || { coinAmount: 0, numberOfModels: 0 };
 }
