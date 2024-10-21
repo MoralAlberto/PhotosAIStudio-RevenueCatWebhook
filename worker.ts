@@ -64,14 +64,15 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   }
 }
 
-function getProductDetails(productId: string): { coinAmount: number, numberOfModels: number } {
+function getProductDetails(productId: string): { coinAmount: number, numberOfModels: number, isConsumable: boolean } {
   console.log(`[getProductDetails] Obteniendo detalles para el producto: ${productId}`);
-  const productDetails: { [key: string]: { coinAmount: number, numberOfModels: number } } = {
-    'subscribe.photos_ai_studio.1week_starter': { coinAmount: 50, numberOfModels: 1 },
-    'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 2 },
-    'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 3 }
+  const productDetails: { [key: string]: { coinAmount: number, numberOfModels: number, isConsumable: boolean } } = {
+    'subscribe.photos_ai_studio.1week_starter': { coinAmount: 50, numberOfModels: 1, isConsumable: false },
+    'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 2, isConsumable: false },
+    'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 3, isConsumable: false },
+    'photosai.credits.100': { coinAmount: 100, numberOfModels: 0, isConsumable: true }
   };
-  return productDetails[productId] || { coinAmount: 0, numberOfModels: 0 };
+  return productDetails[productId] || { coinAmount: 0, numberOfModels: 0, isConsumable: false };
 }
 
 async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
@@ -88,10 +89,10 @@ async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
 
   console.log(`[handlePurchaseEvent] ID de usuario: ${userId}, ID de producto: ${productId}, ID de transacción: ${transactionId}, Fecha de expiración: ${expirationDate}`);
 
-  const { coinAmount, numberOfModels } = getProductDetails(productId);
-  console.log(`[handlePurchaseEvent] Cantidad de monedas: ${coinAmount}, Número de modelos: ${numberOfModels}`);
+  const { coinAmount, numberOfModels, isConsumable } = getProductDetails(productId);
+  console.log(`[handlePurchaseEvent] Cantidad de monedas: ${coinAmount}, Número de modelos: ${numberOfModels}, Es consumible: ${isConsumable}`);
 
-  await updateUserCredits(userId, transactionId, coinAmount, numberOfModels, productId, expirationDate, env);
+  await updateUserCredits(userId, transactionId, coinAmount, numberOfModels, productId, expirationDate, isConsumable, env);
 }
 
 async function updateUserCredits(
@@ -101,11 +102,24 @@ async function updateUserCredits(
   numberOfModels: number, 
   productId: string,
   expirationDate: string,
+  isConsumable: boolean,
   env: Env
 ): Promise<void> {
-  console.log(`[updateUserCredits] Actualizando créditos para User ID: ${userId}, Transaction ID: ${transactionId}, Monedas: ${coinAmount}, Modelos: ${numberOfModels}, Producto: ${productId}, Expiración: ${expirationDate}`);
+  console.log(`[updateUserCredits] Actualizando créditos para User ID: ${userId}, Transaction ID: ${transactionId}, Monedas: ${coinAmount}, Modelos: ${numberOfModels}, Producto: ${productId}, Expiración: ${expirationDate}, Es consumible: ${isConsumable}`);
+
+  // Función para validar UUID
+  function isValidUUID(uuid: string): boolean {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(uuid);
+  }
 
   try {
+    // Validar que userId es un UUID válido
+    if (!isValidUUID(userId)) {
+      console.error('[updateUserCredits] User ID no es un UUID válido:', userId);
+      throw new Error('User ID no es un UUID válido');
+    }
+
     const response = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/process_transaction`, {
       method: 'POST',
       headers: {
@@ -119,7 +133,8 @@ async function updateUserCredits(
         p_coin_amount: coinAmount,
         p_models: numberOfModels,
         p_product_id: productId,
-        p_expiration_date: expirationDate
+        p_expiration_date: expirationDate,
+        p_is_consumable: isConsumable
       })
     });
 
