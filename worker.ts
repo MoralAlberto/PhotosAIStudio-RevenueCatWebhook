@@ -81,18 +81,19 @@ async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
   const productId = event.event.product_id;
   const transactionId = event.event.id;
   const expirationDate = new Date(event.event.expiration_at_ms).toISOString().split('T')[0]; // Convertir a YYYY-MM-DD
+  const isRenewal = event.event.type === 'RENEWAL';
 
   if (!transactionId) {
     console.error('[handlePurchaseEvent] ID de transacción no válido');
     throw new Error('ID de transacción no válido');
   }
 
-  console.log(`[handlePurchaseEvent] ID de usuario: ${userId}, ID de producto: ${productId}, ID de transacción: ${transactionId}, Fecha de expiración: ${expirationDate}`);
+  console.log(`[handlePurchaseEvent] ID de usuario: ${userId}, ID de producto: ${productId}, ID de transacción: ${transactionId}, Fecha de expiración: ${expirationDate}, Es renovación: ${isRenewal}`);
 
   const { coinAmount, numberOfModels, isConsumable } = getProductDetails(productId);
   console.log(`[handlePurchaseEvent] Cantidad de monedas: ${coinAmount}, Número de modelos: ${numberOfModels}, Es consumible: ${isConsumable}`);
 
-  await updateUserCredits(userId, transactionId, coinAmount, numberOfModels, productId, expirationDate, isConsumable, env);
+  await updateUserCredits(userId, transactionId, coinAmount, numberOfModels, productId, expirationDate, isConsumable, isRenewal, env);
 }
 
 async function updateUserCredits(
@@ -103,9 +104,10 @@ async function updateUserCredits(
   productId: string,
   expirationDate: string,
   isConsumable: boolean,
+  isRenewal: boolean,
   env: Env
 ): Promise<void> {
-  console.log(`[updateUserCredits] Actualizando créditos para User ID: ${userId}, Transaction ID: ${transactionId}, Monedas: ${coinAmount}, Modelos: ${numberOfModels}, Producto: ${productId}, Expiración: ${expirationDate}, Es consumible: ${isConsumable}`);
+  console.log(`[updateUserCredits] Actualizando créditos para User ID: ${userId}, Transaction ID: ${transactionId}, Monedas: ${coinAmount}, Modelos: ${numberOfModels}, Producto: ${productId}, Expiración: ${expirationDate}, Es consumible: ${isConsumable}, Es renovación: ${isRenewal}`);
 
   // Función para validar UUID
   function isValidUUID(uuid: string): boolean {
@@ -134,7 +136,8 @@ async function updateUserCredits(
         p_models: numberOfModels,
         p_product_id: productId,
         p_expiration_date: expirationDate,
-        p_is_consumable: isConsumable
+        p_is_consumable: isConsumable,
+        p_is_renewal: isRenewal
       })
     });
 
