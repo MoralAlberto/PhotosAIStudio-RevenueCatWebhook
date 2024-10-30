@@ -6,7 +6,6 @@ export interface Env {
     SUPABASE_URL: string;
 }
 
-// Definir la jerarquía de planes
 const PLAN_HIERARCHY = {
   'subscribe.photos_ai_studio.1week_basic': 1,
   'subscribe.photos_ai_studio.1week_starter': 2,
@@ -20,19 +19,24 @@ function isUpgrade(currentPlan: string, newPlan: string): boolean {
   return (PLAN_HIERARCHY[newPlan as PlanId] || 0) > (PLAN_HIERARCHY[currentPlan as PlanId] || 0);
 }
 
-// Añadir precios base para cálculos
 const BASE_PRICES = {
-  'subscribe.photos_ai_studio.1week_basic': 6.99,
-  'subscribe.photos_ai_studio.1week_starter': 9.99,
-  'subscribe.photos_ai_studio.1week_pro': 17.99,
-  'subscribe.photos_ai_studio.1week_premium': 24.99
+  'subscribe.photos_ai_studio.1week_basic': 9.99,
+  'subscribe.photos_ai_studio.1week_starter': 12.99,
+  'subscribe.photos_ai_studio.1week_pro': 18.99,
+  'subscribe.photos_ai_studio.1week_premium': 27.99
 } as const;
 
-// Función para calcular créditos ajustados
-function calculateAdjustedCredits(baseCredits: number, paidPrice: number, productId: string): number {
+function calculateAdjustedCredits(baseCredits: number, paidPrice: number, productId: string, isRenewal: boolean): number {
   console.log(`[calculateAdjustedCredits] Starting calculation for product: ${productId}`);
   console.log(`[calculateAdjustedCredits] Base credits: ${baseCredits}`);
   console.log(`[calculateAdjustedCredits] Paid price: ${paidPrice}`);
+  console.log(`[calculateAdjustedCredits] Is renewal: ${isRenewal}`);
+  
+  // Si es una renovación, devolvemos los créditos base sin ajustar
+  if (isRenewal) {
+    console.log(`[calculateAdjustedCredits] Renewal detected - returning base credits: ${baseCredits}`);
+    return baseCredits;
+  }
   
   const basePrice = BASE_PRICES[productId as keyof typeof BASE_PRICES] || 0;
   console.log(`[calculateAdjustedCredits] Base price for product: ${basePrice}`);
@@ -61,7 +65,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 
   const authHeader = request.headers.get('Authorization');
   if (!env.REVENUECAT_WEBHOOK_AUTH_TOKEN || authHeader !== `${env.REVENUECAT_WEBHOOK_AUTH_TOKEN}`) {
-    console.error("[handleWebhook] Token de autenticación inválido");
+    console.error("[handleWebhook] Invalid authentication token");
     return new Response('Unauthorized', { status: 401 });
   }
 
@@ -97,15 +101,7 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 
 async function handleProductChangeEvent(event: any, env: Env): Promise<void> {
   console.log('[handleProductChangeEvent] Full event data:', JSON.stringify(event.event, null, 2));
-  
-  if (event.event.expiration_at_ms < event.event.event_timestamp_ms) {
-    console.log(`[handleProductChangeEvent] Skipping due to timing:
-      expiration_at_ms: ${event.event.expiration_at_ms}
-      event_timestamp_ms: ${event.event.event_timestamp_ms}
-      difference: ${event.event.expiration_at_ms - event.event.event_timestamp_ms}ms`);
-    return;
-  }
-  
+
   const currentPlan = event.event.product_id;
   const newPlan = event.event.new_product_id;
   const userId = event.event.app_user_id;
@@ -120,47 +116,41 @@ async function handleProductChangeEvent(event: any, env: Env): Promise<void> {
     Paid Price: ${paidPrice}
     Expiration: ${expirationDate}`);
 
-  if (isUpgrade(currentPlan, newPlan)) {
-    console.log('[handleProductChangeEvent] Confirmed as upgrade');
-    const { coinAmount, numberOfModels } = getProductDetails(newPlan);
-    console.log(`[handleProductChangeEvent] Base plan details:
-      Base Coins: ${coinAmount}
-      Models: ${numberOfModels}`);
-      
-    const adjustedCoins = calculateAdjustedCredits(coinAmount, paidPrice, newPlan);
-    console.log(`[handleProductChangeEvent] After adjustment:
-      Original coins: ${coinAmount}
-      Adjusted coins: ${adjustedCoins}
-      Difference: ${adjustedCoins - coinAmount}`);
-    
-    await updateUserCredits(
-      userId,
-      transactionId,
-      adjustedCoins,
-      numberOfModels,
-      newPlan,
-      expirationDate,
-      false,
-      false,
-      env,
-      true
-    );
-  } else {
-    console.log('[handleProductChangeEvent] Processing as downgrade');
-    const { coinAmount, numberOfModels } = getProductDetails(newPlan);
-    await updateUserCredits(
-      userId,
-      transactionId,
-      coinAmount,
-      numberOfModels,
-      newPlan,
-      expirationDate,
-      false,
-      false,
-      env,
-      false
-    );
+  // Si es downgrade, no procesamos el cambio
+  if (!isUpgrade(currentPlan, newPlan)) {
+    console.log('[handleProductChangeEvent] Downgrade detected - changes will apply on next renewal');
+    return;
   }
+
+  // Para upgrades, solo procesamos si hay un pago asociado
+  if (paidPrice <= 0) {
+    console.log('[handleProductChangeEvent] Skipping - no payment associated with upgrade');
+    return;
+  }
+
+  console.log('[handleProductChangeEvent] Processing paid upgrade');
+  const { coinAmount, numberOfModels } = getProductDetails(newPlan);
+  console.log(`[handleProductChangeEvent] Base plan details:
+    Base Coins: ${coinAmount}
+    Models: ${numberOfModels}`);
+    
+  const adjustedCoins = calculateAdjustedCredits(coinAmount, paidPrice, newPlan, false);
+  console.log(`[handleProductChangeEvent] After adjustment:
+    Original coins: ${coinAmount}
+    Adjusted coins: ${adjustedCoins}
+    Difference: ${adjustedCoins - coinAmount}`);
+  
+  await updateUserCredits(
+    userId,
+    transactionId,
+    adjustedCoins,
+    numberOfModels,
+    newPlan,
+    expirationDate,
+    false,
+    false,
+    env
+  );
 }
 
 function getProductDetails(productId: string): { coinAmount: number, numberOfModels: number, isConsumable: boolean } {
@@ -186,7 +176,7 @@ async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
   console.log(`[handlePurchaseEvent] Processing purchase for product: ${effectiveProductId}`);
 
   const { coinAmount, numberOfModels, isConsumable } = getProductDetails(effectiveProductId);
-  const adjustedCoins = isConsumable ? coinAmount : calculateAdjustedCredits(coinAmount, paidPrice, effectiveProductId);
+  const adjustedCoins = isConsumable ? coinAmount : calculateAdjustedCredits(coinAmount, paidPrice, effectiveProductId, isRenewal);
   
   await updateUserCredits(
     userId,
@@ -197,8 +187,7 @@ async function handlePurchaseEvent(event: any, env: Env): Promise<void> {
     expirationDate,
     isConsumable,
     isRenewal,
-    env,
-    false
+    env
   );
 }
 
@@ -211,8 +200,7 @@ async function updateUserCredits(
   expirationDate: string,
   isConsumable: boolean,
   isRenewal: boolean,
-  env: Env,
-  isUpgrade: boolean
+  env: Env
 ): Promise<void> {
   console.log(`[updateUserCredits] Processing update:
     User: ${userId}
@@ -220,13 +208,12 @@ async function updateUserCredits(
     Coins: ${coinAmount}
     Models: ${numberOfModels}
     Product: ${productId}
-    Is Upgrade: ${isUpgrade}
     Is Renewal: ${isRenewal}
     Is Consumable: ${isConsumable}`);
 
   if (!isValidUUID(userId)) {
     console.error('[updateUserCredits] Invalid UUID:', userId);
-    throw new Error('User ID no es un UUID válido');
+    throw new Error('User ID is not a valid UUID');
   }
 
   try {
@@ -256,7 +243,7 @@ async function updateUserCredits(
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[updateUserCredits] Supabase error response:', errorText);
-      throw new Error(`Error al actualizar los créditos del usuario: ${errorText}`);
+      throw new Error(`Error updating user credits: ${errorText}`);
     }
 
     const result = await response.json();
