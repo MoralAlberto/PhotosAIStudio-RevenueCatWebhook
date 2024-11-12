@@ -7,10 +7,10 @@ export interface Env {
 }
 
 const PLAN_HIERARCHY = {
-  'subscribe.photos_ai_studio.1week_basic': 1,
-  'subscribe.photos_ai_studio.1week_starter': 2,
-  'subscribe.photos_ai_studio.1week_pro': 3,
-  'subscribe.photos_ai_studio.1week_premium': 4
+  'subscribe.photos_ai_studio.1month_basic': 1,
+  'subscribe.photos_ai_studio.1month_starter': 2,
+  'subscribe.photos_ai_studio.1month_pro': 3,
+  'subscribe.photos_ai_studio.1month_premium': 4
 } as const;
 
 type PlanId = keyof typeof PLAN_HIERARCHY;
@@ -20,16 +20,16 @@ function isUpgrade(currentPlan: string, newPlan: string): boolean {
 }
 
 const BASE_PRICES = {
-  'subscribe.photos_ai_studio.1week_basic': 9.99,
-  'subscribe.photos_ai_studio.1week_starter': 12.99,
-  'subscribe.photos_ai_studio.1week_pro': 18.99,
-  'subscribe.photos_ai_studio.1week_premium': 27.99
+  'subscribe.photos_ai_studio.1month_basic': 6.99,
+  'subscribe.photos_ai_studio.1month_starter': 8.99,
+  'subscribe.photos_ai_studio.1month_pro': 18.99,
+  'subscribe.photos_ai_studio.1month_premium': 27.99
 } as const;
 
 function calculateAdjustedCredits(baseCredits: number, paidPrice: number, productId: string, isRenewal: boolean): number {
   console.log(`[calculateAdjustedCredits] Starting calculation for product: ${productId}`);
   console.log(`[calculateAdjustedCredits] Base credits: ${baseCredits}`);
-  console.log(`[calculateAdjustedCredits] Paid price: ${paidPrice}`);
+  /*console.log(`[calculateAdjustedCredits] Paid price: ${paidPrice}`);
   console.log(`[calculateAdjustedCredits] Is renewal: ${isRenewal}`);
   
   // Si es una renovación, devolvemos los créditos base sin ajustar
@@ -51,7 +51,8 @@ function calculateAdjustedCredits(baseCredits: number, paidPrice: number, produc
   
   const result = Math.ceil(baseCredits * priceRatio);
   console.log(`[calculateAdjustedCredits] Final adjusted credits: ${result}`);
-  return result;
+  return result;*/
+  return baseCredits;
 }
 
 export default {
@@ -100,14 +101,13 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 }
 
 async function handleProductChangeEvent(event: any, env: Env): Promise<void> {
-  console.log('[handleProductChangeEvent] Full event data:', JSON.stringify(event.event, null, 2));
-
   const currentPlan = event.event.product_id;
   const newPlan = event.event.new_product_id;
   const userId = event.event.app_user_id;
   const transactionId = event.event.id;
   const expirationDate = new Date(event.event.expiration_at_ms).toISOString().split('T')[0];
   const paidPrice = event.event.price_in_purchased_currency || 0;
+  const isSandbox = event.event.environment === 'SANDBOX';
 
   console.log(`[handleProductChangeEvent] Processing change:
     From: ${currentPlan}
@@ -122,43 +122,33 @@ async function handleProductChangeEvent(event: any, env: Env): Promise<void> {
     return;
   }
 
-  // Para upgrades, solo procesamos si hay un pago asociado
-  if (paidPrice <= 0) {
-    console.log('[handleProductChangeEvent] Skipping - no payment associated with upgrade');
-    return;
-  }
-
-  console.log('[handleProductChangeEvent] Processing paid upgrade');
-  const { coinAmount, numberOfModels } = getProductDetails(newPlan);
-  console.log(`[handleProductChangeEvent] Base plan details:
-    Base Coins: ${coinAmount}
-    Models: ${numberOfModels}`);
+  // Para upgrades en sandbox o con pago, procesamos el cambio
+  if (paidPrice > 0 || isSandbox) {
+    console.log('[handleProductChangeEvent] Processing upgrade');
+    const { coinAmount, numberOfModels } = getProductDetails(newPlan);
     
-  const adjustedCoins = calculateAdjustedCredits(coinAmount, paidPrice, newPlan, false);
-  console.log(`[handleProductChangeEvent] After adjustment:
-    Original coins: ${coinAmount}
-    Adjusted coins: ${adjustedCoins}
-    Difference: ${adjustedCoins - coinAmount}`);
-  
-  await updateUserCredits(
-    userId,
-    transactionId,
-    adjustedCoins,
-    numberOfModels,
-    newPlan,
-    expirationDate,
-    false,
-    false,
-    env
-  );
+    await updateUserCredits(
+      userId,
+      transactionId,
+      coinAmount, // Enviamos los créditos base del nuevo plan
+      numberOfModels,
+      newPlan,
+      expirationDate,
+      false,
+      false,
+      env
+    );
+  } else {
+    console.log('[handleProductChangeEvent] Skipping - no payment associated with upgrade');
+  }
 }
 
 function getProductDetails(productId: string): { coinAmount: number, numberOfModels: number, isConsumable: boolean } {
   const productDetails: { [key: string]: { coinAmount: number, numberOfModels: number, isConsumable: boolean } } = {
-    'subscribe.photos_ai_studio.1week_basic': { coinAmount: 20, numberOfModels: 1, isConsumable: false },
-    'subscribe.photos_ai_studio.1week_starter': { coinAmount: 50, numberOfModels: 1, isConsumable: false },
-    'subscribe.photos_ai_studio.1week_pro': { coinAmount: 100, numberOfModels: 2, isConsumable: false },
-    'subscribe.photos_ai_studio.1week_premium': { coinAmount: 250, numberOfModels: 3, isConsumable: false },
+    'subscribe.photos_ai_studio.1month_basic': { coinAmount: 20, numberOfModels: 1, isConsumable: false },
+    'subscribe.photos_ai_studio.1month_starter': { coinAmount: 50, numberOfModels: 1, isConsumable: false },
+    'subscribe.photos_ai_studio.1month_pro': { coinAmount: 200, numberOfModels: 1, isConsumable: false },
+    'subscribe.photos_ai_studio.1month_premium': { coinAmount: 300, numberOfModels: 2, isConsumable: false },
     'photosai.credits.100': { coinAmount: 100, numberOfModels: 0, isConsumable: true }
   };
   return productDetails[productId] || { coinAmount: 0, numberOfModels: 0, isConsumable: false };
